@@ -181,4 +181,7 @@ public interface TweetsResources {
      * @since Twitter4J 4.0.3
      */
     UploadedMedia uploadMedia(String fileName, InputStream media) throws TwitterException;
+
+
+    UploadedMedia uploadVideo(File videoFile) throws TwitterException;
 }

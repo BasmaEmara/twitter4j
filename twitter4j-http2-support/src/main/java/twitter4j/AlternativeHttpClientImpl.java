@@ -18,9 +18,13 @@
 package twitter4j;
 
 import com.squareup.okhttp.*;
+import com.squareup.okhttp.internal.Util;
+import okio.BufferedSink;
+import okio.Okio;
+import okio.Source;
 import twitter4j.conf.ConfigurationContext;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
+
+import java.io.*;
 import java.net.*;
 import java.net.Authenticator;
 import java.util.ArrayList;
@@ -146,10 +150,19 @@ public class AlternativeHttpClientImpl extends HttpClientBase implements HttpRes
 			MultipartBuilder multipartBuilder = new MultipartBuilder(boundary).type(MultipartBuilder.FORM);
 			for(HttpParameter parameter:req.getParameters()){
 				if(parameter.isFile()) {
-					multipartBuilder.addPart(
-							Headers.of("Content-Disposition","form-data; name=\"" + parameter.getName() + "\"; filename=\"" + parameter.getFile().getName()+"\""),
-							RequestBody.create(MediaType.parse(parameter.getContentType()),parameter.getFile())
-					);
+
+					//BufferedInputStream in = new BufferedInputStream(parameter.hasFileBody() ? parameter.getFileBody() : new FileInputStream(parameter.getFile()));
+					if(parameter.hasFileBody()) {
+						multipartBuilder.addPart(
+								Headers.of("Content-Disposition", "form-data; name=\"" + parameter.getName() + "\"; filename=\"" + parameter.getFile().getName() + "\""),
+								createInputStreamRequestBody(MediaType.parse(parameter.getContentType()), parameter.getFileBody())
+						);
+					}else{
+						multipartBuilder.addPart(
+								Headers.of("Content-Disposition", "form-data; name=\"" + parameter.getName() + "\"; filename=\"" + parameter.getFile().getName() + "\""),
+								RequestBody.create(MediaType.parse(parameter.getContentType()), parameter.getFile())
+						);
+					}
 				}else {
 					multipartBuilder.addPart(
 							Headers.of("Content-Disposition","form-data; name=\"" + parameter.getName()+"\""),
@@ -244,6 +257,37 @@ public class AlternativeHttpClientImpl extends HttpClientBase implements HttpRes
 				okHttpClient.setReadTimeout(CONF.getHttpReadTimeout(),TimeUnit.MILLISECONDS);
 			}
 		}
+	}
+
+
+
+	public static RequestBody createInputStreamRequestBody(final MediaType mediaType, final InputStream inputStream) {
+		return new RequestBody() {
+			@Override
+			public MediaType contentType() {
+				return mediaType;
+			}
+
+			@Override
+			public long contentLength() {
+				try {
+					return inputStream.available();
+				} catch (IOException e) {
+					return 0;
+				}
+			}
+
+			@Override
+			public void writeTo(BufferedSink sink) throws IOException {
+				Source source = null;
+				try {
+					source = Okio.source(inputStream);
+					sink.writeAll(source);
+				} finally {
+					Util.closeQuietly(source);
+				}
+			}
+		};
 	}
 
 	//for test

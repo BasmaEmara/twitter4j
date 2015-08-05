@@ -39,6 +39,7 @@ import static twitter4j.HttpParameter.getParameterArray;
  * @author Yusuke Yamamoto - yusuke at mac.com
  */
 class TwitterImpl extends TwitterBaseImpl implements Twitter {
+    static Logger logger = Logger.getLogger(TwitterImpl.class);
     private static final long serialVersionUID = 9170943084096085770L;
     private final String IMPLICIT_PARAMS_STR;
     private final HttpParameter[] IMPLICIT_PARAMS;
@@ -242,6 +243,110 @@ class TwitterImpl extends TwitterBaseImpl implements Twitter {
     public UploadedMedia uploadMedia(String fileName, InputStream image) throws TwitterException {
         return new UploadedMedia(post(conf.getUploadBaseURL() + "media/upload.json"
                 , new HttpParameter[]{new HttpParameter("media", fileName, image)}).asJSONObject());
+    }
+
+    @Override
+    public UploadedMedia uploadVideo(File videoFile) throws TwitterException {
+        String url = conf.getUploadBaseURL() + "media/upload.json";
+        //TODO mimeType check
+        try{
+            JSONObject initResponse = post(url,
+                    new HttpParameter("command","INIT"),
+                    new HttpParameter("media_type","video/mp4"),
+                    new HttpParameter("total_bytes",videoFile.length())).asJSONObject();
+            long mediaId = initResponse.getLong("media_id");
+
+            long uploadLimit = 5000000;
+
+            int segment = (int) Math.ceil((double)videoFile.length()/(double)uploadLimit);
+            for(int i=0;i<segment;i++){
+                InputStream is = new LimitInputStream(new FileInputStream(videoFile),uploadLimit*i,uploadLimit);
+                post(url,
+                        new HttpParameter("command", "APPEND"),
+                        new HttpParameter("media_id", mediaId),
+                        new HttpParameter("segment_index", i),
+                        new HttpParameter("media", videoFile.getPath(), is)
+                );
+            }
+            return new UploadedMedia( post(url,new HttpParameter("command", "FINALIZE"), new HttpParameter("media_id", mediaId) ).asJSONObject());
+        } catch (JSONException e) {
+            throw new TwitterException(e);
+        }catch (IOException e){
+            throw new TwitterException(e.getMessage(), e);
+        }
+    }
+
+    public static final class LimitInputStream extends FilterInputStream {
+
+        private long offset;
+        private long left;
+        private long mark = -1;
+
+        /**
+         * Wraps another input stream, limiting the number of bytes which can be read.
+         *
+         * @param in the input stream to be wrapped
+         * @param limit the maximum number of bytes to be read
+         */
+        public LimitInputStream(InputStream in,long offset, long limit) throws IOException {
+            super(in);
+            this.offset = offset;
+            in.skip(offset);
+            left = limit;
+        }
+
+        @Override public int available() throws IOException {
+            return (int) Math.min(in.available(), left);
+        }
+
+        @Override public void mark(int readlimit) {
+            in.mark(readlimit);
+            mark = left;
+            // it's okay to mark even if mark isn't supported, as reset won't work
+        }
+
+        @Override public int read() throws IOException {
+            offset++;
+            if (left == 0) {
+                return -1;
+            }
+
+            int result = in.read();
+            if (result != -1) {
+                --left;
+            }
+            return result;
+        }
+
+        @Override public int read(byte[] b, int off, int len) throws IOException {
+            if (left == 0) {
+                return -1;
+            }
+
+            len = (int) Math.min(len, left);
+            int result = in.read(b, off, len);
+            if (result != -1) {
+                left -= result;
+            }
+            return result;
+        }
+
+        @Override public void reset() throws IOException {
+            if (!in.markSupported()) {
+                throw new IOException("Mark not supported");
+            }
+            if (mark == -1) {
+                throw new IOException("Mark not set");
+            }
+
+            in.reset();
+            in.skip(offset);
+            left = mark;
+        }
+
+        @Override public long skip(long n) throws IOException {
+           return in.skip(n);
+        }
     }
 
     /* Search Resources */
